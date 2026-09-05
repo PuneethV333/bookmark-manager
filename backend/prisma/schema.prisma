@@ -15,16 +15,18 @@ model User {
 }
 
 model Bookmark {
-  id     String  @id @default(cuid())
-  url    String
-  title  String?
-  isRead Boolean @default(false)
-
-  user   User   @relation(fields: [userId], references: [id])
-  userId String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(cuid())
+  url           String
+  title         String?
+  site          String
+  slug          String
+  isRead        Boolean   @default(false)
+  lastChapter   Float?
+  lastCheckedAt DateTime?
+  user          User      @relation(fields: [userId], references: [id])
+  userId        String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([userId, url])
 }
