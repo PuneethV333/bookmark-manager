@@ -51,7 +51,6 @@ export class GuestAuthGuard implements CanActivate {
   }
 
   private setGuestCookie(res: Response, token: string): void {
-    const expiresIn = this.configService.get<string>('JWT_EXPIRES_IN', '30d');
     res.cookie(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'lax',
@@ -59,21 +58,6 @@ export class GuestAuthGuard implements CanActivate {
         this.configService.get<string>('NODE_ENV', 'development') ===
         'production',
       path: '/',
-      maxAge: expiresInToMs(expiresIn),
     });
   }
-}
-
-function expiresInToMs(expiresIn: string): number {
-  const match = /^(\d+)\s*([smhdw])$/.exec(expiresIn.trim());
-  if (!match) return 30 * 24 * 60 * 60 * 1000;
-  const [, value, unit] = match;
-  const ms = {
-    s: 1000,
-    m: 60_000,
-    h: 3_600_000,
-    d: 86_400_000,
-    w: 604_800_000,
-  };
-  return Number(value) * ms[unit as keyof typeof ms];
 }
