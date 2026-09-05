@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.db-journal
+prisma/*.db
+
+# Prisma generated client
+src/generated/prisma/
+
+# Logs
+*.log
+
+# Coverage
+coverage/
