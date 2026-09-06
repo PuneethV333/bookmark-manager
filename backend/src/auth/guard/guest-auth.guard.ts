@@ -4,14 +4,17 @@ import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { GuestPayload, GuestPayloadSchema } from '../types/guest-payload.type';
+import { PrismaService } from '../../prisma/prisma.service';
 
 export const AUTH_COOKIE_NAME = 'jwtAuthToken';
+const COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000; // 1 year — must match JWT expiresIn in JwtModule config
 
 @Injectable()
 export class GuestAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -31,10 +34,16 @@ export class GuestAuthGuard implements CanActivate {
     }
 
     const guestId = randomUUID();
+
+    await this.prisma.user.create({
+      data: { id: guestId },
+    });
+
     const jwt = await this.jwtService.signAsync({
       sub: guestId,
       guest: true as const,
     });
+
     this.setGuestCookie(res, jwt);
     req.user = { sub: guestId, guest: true };
     return true;
@@ -58,6 +67,7 @@ export class GuestAuthGuard implements CanActivate {
         this.configService.get<string>('NODE_ENV', 'development') ===
         'production',
       path: '/',
+      maxAge: COOKIE_MAX_AGE_MS, // without this it's a session cookie and dies on browser close
     });
   }
 }
