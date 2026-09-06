@@ -1,12 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as cheerio from 'cheerio';
 import { PrismaService } from '../prisma/prisma.service';
-
-const SITE_MATCHERS: Record<string, (url: string) => string | undefined> = {
-  'asurascan.com': (url) => url.match(/\/manga\/([^/]+)/)?.[1],
-  'kingofshojo.com': (url) => url.match(/\/manga\/([^/]+)/)?.[1],
-  // ...rest of your sites
-};
+import { SITE_MATCHERS } from './constants/site-matchers';
 
 function matchBookmarkToSite(url: string) {
   try {

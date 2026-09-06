@@ -1,0 +1,25 @@
+export const SITE_MATCHERS: Record<
+  string,
+  (url: string) => string | undefined
+> = {
+  'webtoons.com': (url) => url.match(/[?&]title_no=(\d+)/)?.[1],
+  'mangaplus.shueisha.co.jp': (url) => url.match(/\/titles\/(\d+)/)?.[1],
+  'mangadex.org': (url) => url.match(/\/title\/([a-f0-9-]{36})/)?.[1],
+  'tapas.io': (url) => url.match(/\/series\/([^/]+)/)?.[1],
+  'viz.com': (url) => url.match(/\/manga\/([^/?]+)/)?.[1],
+  'manga.bilibili.com': (url) => url.match(/\/detail\/(mc\d+)/)?.[1],
+  'tappytoon.com': (url) => url.match(/\/comics\/([^/?]+)/)?.[1],
+  'lezhinus.com': (url) => url.match(/\/comic\/([^/?]+)/)?.[1],
+  'page.kakao.com': (url) => url.match(/\/content\/(\d+)/)?.[1],
+  'ridibooks.com': (url) => url.match(/\/(?:books|series)\/(\d+)/)?.[1],
+  'comikey.com': (url) => url.match(/\/comics\/([^/?]+)/)?.[1],
+  'global.manga-up.com': (url) => url.match(/\/manga\/([^/?]+)/)?.[1],
+  'comics.inkr.com': (url) => url.match(/\/title\/(\d+-[^/?]+)/)?.[1],
+  'toomics.com': (url) => url.match(/\/toon\/(\d+)/)?.[1],
+  'mangatoon.mobi': (url) => url.match(/\/detail\/([^/?]+)/)?.[1],
+  'webcomicsapp.com': (url) => url.match(/\/detail\/(\d+)/)?.[1],
+  'manta.net': (url) => url.match(/\/(?:comic|series)\/([^/?]+)/)?.[1],
+  'asurascans.com': (url) => url.match(/\/series\/([^/?]+)/)?.[1],
+  'mangakakalot.gg': (url) => url.match(/\/manga\/([^/?]+)/)?.[1],
+  'kingofshojo.com': (url) => url.match(/\/manga\/([^/]+)/)?.[1],
+};
