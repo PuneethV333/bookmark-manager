@@ -7,7 +7,7 @@ import { GuestPayload, GuestPayloadSchema } from '../types/guest-payload.type';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export const AUTH_COOKIE_NAME = 'jwtAuthToken';
-const COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000; // 1 year — must match JWT expiresIn in JwtModule config
+const COOKIE_MAX_AGE_MS = 10 * 365 * 24 * 60 * 60 * 1000; // 10 years — effectively non-expiring; must match JWT expiresIn in JwtModule config
 
 @Injectable()
 export class GuestAuthGuard implements CanActivate {
@@ -67,7 +67,7 @@ export class GuestAuthGuard implements CanActivate {
         this.configService.get<string>('NODE_ENV', 'development') ===
         'production',
       path: '/',
-      maxAge: COOKIE_MAX_AGE_MS, // without this it's a session cookie and dies on browser close
+      maxAge: COOKIE_MAX_AGE_MS, // — effectively never expires, survives browser restarts
     });
   }
 }

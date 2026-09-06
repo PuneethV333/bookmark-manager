@@ -12,7 +12,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     JwtModule.registerAsync({
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow('JWT_SECRET'),
-        signOptions: { expiresIn: '365d' }, // must match COOKIE_MAX_AGE_MS above
+        signOptions: { expiresIn: '3650d' }, // must match COOKIE_MAX_AGE_MS in guest-auth.guard
       }),
       inject: [ConfigService],
     }),
