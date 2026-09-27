@@ -6,6 +6,7 @@ export interface ChapterInfo {
   number: number;
   url: string | undefined;
   date: string;
+  image?: string;
 }
 
 export const scrapeKingOfShojo = async (
@@ -42,5 +43,12 @@ export const scrapeKingOfShojo = async (
     chapter.number > latest.number ? chapter : latest,
   );
 
-  return latestChapter;
+  // Cover image lives in the .thumb block (schema.org ImageObject),
+  // NOT .bigbanner — that's the blurred hero background, a different image.
+  const image = $('.seriestucontl .thumb[itemprop="image"] img').attr('src');
+
+  return {
+    ...latestChapter,
+    image,
+  };
 };

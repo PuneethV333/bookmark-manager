@@ -47,9 +47,12 @@ function matchBookmarkToSite(url: string): {
   return null;
 }
 
-type ScraperResult = {
+type ScrapedChapter = {
   number: number;
-} | null;
+  image?: string;
+};
+
+type ScraperResult = ScrapedChapter | null;
 
 type Scraper = (url: string) => Promise<ScraperResult>;
 
@@ -123,10 +126,13 @@ export class BookmarksService {
         userId,
         url: { in: deduped.map((bookmark) => bookmark.url) },
       },
-      select: { url: true, lastChapter: true },
+      select: { url: true, lastChapter: true, comicProfilePic: true },
     });
     const existingChapterByUrl = new Map(
       existing.map((bookmark) => [bookmark.url, bookmark.lastChapter]),
+    );
+    const existingImageByUrl = new Map(
+      existing.map((bookmark) => [bookmark.url, bookmark.comicProfilePic]),
     );
 
     /*
@@ -166,6 +172,7 @@ export class BookmarksService {
           return {
             ...bookmark,
             lastChapter: null,
+            comicProfilePic: existingImageByUrl.get(bookmark.url) ?? null,
             lastCheckedAt: null,
           };
         }
@@ -174,7 +181,7 @@ export class BookmarksService {
         const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
 
         let result = await this.redis
-          .get<{ number: number }>(cacheKey)
+          .get<ScrapedChapter>(cacheKey)
           .catch(() => null);
 
         if (!result) {
@@ -212,6 +219,11 @@ export class BookmarksService {
           ...bookmark,
           lastChapter,
 
+          // Keep the previous image if this scrape didn't find one —
+          // never regress a known-good image to null.
+          comicProfilePic:
+            result?.image ?? existingImageByUrl.get(bookmark.url) ?? null,
+
           lastCheckedAt: result ? new Date() : null,
         };
       }),
@@ -232,6 +244,7 @@ export class BookmarksService {
               ? {
                   lastChapter: bookmark.lastChapter,
                   lastCheckedAt: bookmark.lastCheckedAt,
+                  comicProfilePic: bookmark.comicProfilePic,
                 }
               : {},
 
@@ -243,6 +256,7 @@ export class BookmarksService {
             slug: bookmark.slug,
             lastChapter: bookmark.lastChapter,
             lastCheckedAt: bookmark.lastCheckedAt,
+            comicProfilePic: bookmark.comicProfilePic,
           },
         }),
       ),
@@ -287,7 +301,7 @@ export class BookmarksService {
     const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
 
     let result = await this.redis
-      .get<{ number: number }>(cacheKey)
+      .get<ScrapedChapter>(cacheKey)
       .catch(() => null);
 
     if (!result) {
@@ -325,8 +339,15 @@ export class BookmarksService {
     const updated = await this.prisma.bookmark.update({
       where: { id: bookmark.id },
       data: hasNewChapter
-        ? { lastChapter: result.number, lastCheckedAt: new Date() }
-        : { lastCheckedAt: new Date() },
+        ? {
+            lastChapter: result.number,
+            lastCheckedAt: new Date(),
+            comicProfilePic: result.image ?? bookmark.comicProfilePic,
+          }
+        : {
+            lastCheckedAt: new Date(),
+            comicProfilePic: result.image ?? bookmark.comicProfilePic,
+          },
     });
 
     return {
@@ -354,6 +375,7 @@ export class BookmarksService {
         slug: true,
         lastChapter: true,
         lastCheckedAt: true,
+        comicProfilePic: true,
       },
     });
 
@@ -401,7 +423,7 @@ export class BookmarksService {
         const limit = limiterFor(bookmark.site);
 
         let result = await this.redis
-          .get<{ number: number }>(cacheKey)
+          .get<ScrapedChapter>(cacheKey)
           .catch(() => null);
 
         if (!result) {
@@ -443,8 +465,15 @@ export class BookmarksService {
         const updated = await this.prisma.bookmark.update({
           where: { id: bookmark.id },
           data: hasNewChapter
-            ? { lastChapter: result.number, lastCheckedAt: new Date() }
-            : { lastCheckedAt: new Date() },
+            ? {
+                lastChapter: result.number,
+                lastCheckedAt: new Date(),
+                comicProfilePic: result.image ?? bookmark.comicProfilePic,
+              }
+            : {
+                lastCheckedAt: new Date(),
+                comicProfilePic: result.image ?? bookmark.comicProfilePic,
+              },
         });
 
         return {

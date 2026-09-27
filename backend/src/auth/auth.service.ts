@@ -32,7 +32,7 @@ export class AuthService {
     res.cookie(AUTH_COOKIE_NAME, jwt, {
       httpOnly: true,
       sameSite: crossSite ? 'none' : 'lax',
-      secure: isProd || crossSite,
+      secure: isProd || crossSite, // sameSite: 'none' requires secure: true
       path: '/',
       maxAge: COOKIE_MAX_AGE_MS,
     });

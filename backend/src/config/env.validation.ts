@@ -14,7 +14,10 @@ export const envSchema = z.object({
   JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
   THROTTLE_TTL: z.coerce.number().int().positive().default(60_000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
-  CROSS_SITE_AUTH: z.coerce.boolean().default(false),
+  CROSS_SITE_AUTH: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((val) => val === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
