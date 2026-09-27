@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
-// auth/auth.controller.ts
 import { Controller, Get, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { GuestPayload } from './types/guest-payload.type';
-import { Public } from './decorators/public.decorator'; // see step 3
+import { Public } from './decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {

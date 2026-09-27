@@ -12,11 +12,13 @@ import { memoryStorage } from 'multer';
 import { BookmarksService } from './bookmark.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { GuestPayload } from '../auth/types/guest-payload.type';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('bookmark')
 export class BookmarkController {
   constructor(private readonly bookmarkService: BookmarksService) {}
 
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
   @Post('import')
   @UseInterceptors(
     FileInterceptor('bookmarksFile', {
@@ -52,11 +54,13 @@ export class BookmarkController {
     return this.bookmarkService.importFromHtml(html, user.sub);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Get('check-all')
   async checkAll(@CurrentUser() user: GuestPayload) {
     return this.bookmarkService.batchCheck(user.sub);
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get(':id/check')
   async checkOne(@Param('id') id: string, @CurrentUser() user: GuestPayload) {
     return this.bookmarkService.checkOne(id, user.sub);
