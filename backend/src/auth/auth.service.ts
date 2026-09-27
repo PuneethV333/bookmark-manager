@@ -1,5 +1,5 @@
-// auth/auth.service.ts
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import type { Response } from 'express';
@@ -12,6 +12,7 @@ export class AuthService {
   constructor(
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
   ) {}
 
   async createGuestSession(res: Response) {
@@ -23,10 +24,15 @@ export class AuthService {
       guest: true as const,
     });
 
+    const isProd =
+      this.configService.get<string>('NODE_ENV', 'development') ===
+      'production';
+    const crossSite = this.configService.get<boolean>('CROSS_SITE_AUTH', false);
+
     res.cookie(AUTH_COOKIE_NAME, jwt, {
       httpOnly: true,
-      sameSite: 'lax', // or your CROSS_SITE_AUTH-driven value
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: crossSite ? 'none' : 'lax',
+      secure: isProd || crossSite,
       path: '/',
       maxAge: COOKIE_MAX_AGE_MS,
     });
