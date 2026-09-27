@@ -1,76 +1,53 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+// auth/guard/guest-auth.guard.ts — now verify-only, no creation
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { randomUUID } from 'node:crypto';
-import type { Request, Response } from 'express';
-import { GuestPayload, GuestPayloadSchema } from '../types/guest-payload.type';
-import { PrismaService } from '../../prisma/prisma.service';
+import type { Request } from 'express';
+import { Reflector } from '@nestjs/core';
+import { GuestPayloadSchema } from '../types/guest-payload.type';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 export const AUTH_COOKIE_NAME = 'jwtAuthToken';
-const COOKIE_MAX_AGE_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+export const COOKIE_MAX_AGE_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class GuestAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const http = context.switchToHttp();
-    const req = http.getRequest<Request>();
-    const res = http.getResponse<Response>();
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
 
+    const req = context.switchToHttp().getRequest<Request>();
     const cookies = req.cookies as Record<string, string> | undefined;
     const token = cookies?.[AUTH_COOKIE_NAME];
 
-    if (token) {
-      const payload = await this.verify(token);
-      if (payload) {
-        req.user = payload;
-        return true;
-      }
+    if (!token) {
+      throw new UnauthorizedException(
+        'No session — call POST /auth/guest first',
+      );
     }
 
-    const guestId = randomUUID();
-
-    await this.prisma.user.create({
-      data: { id: guestId },
-    });
-
-    const jwt = await this.jwtService.signAsync({
-      sub: guestId,
-      guest: true as const,
-    });
-
-    this.setGuestCookie(res, jwt);
-    req.user = { sub: guestId, guest: true };
-    return true;
-  }
-
-  private async verify(token: string): Promise<GuestPayload | null> {
     try {
       const payload: unknown = await this.jwtService.verifyAsync(token);
       const parsed = GuestPayloadSchema.safeParse(payload);
-      return parsed.success ? parsed.data : null;
+      if (!parsed.success) {
+        throw new UnauthorizedException('Invalid session');
+      }
+      req.user = parsed.data;
+      return true;
     } catch {
-      return null;
+      throw new UnauthorizedException('Invalid or expired session');
     }
-  }
-
-  private setGuestCookie(res: Response, token: string): void {
-    const isProd =
-      this.configService.get<string>('NODE_ENV', 'development') ===
-      'production';
-    const crossSite = this.configService.get<boolean>('CROSS_SITE_AUTH', false);
-
-    res.cookie(AUTH_COOKIE_NAME, token, {
-      httpOnly: true,
-      sameSite: crossSite ? 'none' : 'lax',
-      secure: isProd || crossSite,
-      path: '/',
-      maxAge: COOKIE_MAX_AGE_MS,
-    });
   }
 }
