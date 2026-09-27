@@ -19,10 +19,14 @@ export class BookmarkController {
   @UseInterceptors(
     FileInterceptor('bookmarksFile', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
       fileFilter: (req, file, cb) => {
         const isHtml =
-          file.mimetype === 'text/html' || file.originalname.endsWith('.html');
+          file.mimetype === 'text/html' ||
+          file.originalname.toLowerCase().endsWith('.html');
+
         if (!isHtml) {
           return cb(
             new BadRequestException('Only .html bookmark exports are accepted'),
@@ -42,6 +46,7 @@ export class BookmarkController {
     }
 
     const html = file.buffer.toString('utf-8');
+
     return this.bookmarkService.importFromHtml(html, user.sub);
   }
 }

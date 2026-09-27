@@ -20,7 +20,6 @@ model Bookmark {
   title         String?
   site          String
   slug          String
-  isRead        Boolean   @default(false)
   lastChapter   Float?
   lastCheckedAt DateTime?
   user          User      @relation(fields: [userId], references: [id])
@@ -30,3 +29,5 @@ model Bookmark {
 
   @@unique([userId, url])
 }
+
+
