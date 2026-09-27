@@ -60,12 +60,15 @@ export class GuestAuthGuard implements CanActivate {
   }
 
   private setGuestCookie(res: Response, token: string): void {
+    const isProd =
+      this.configService.get<string>('NODE_ENV', 'development') ===
+      'production';
+    const crossSite = this.configService.get<boolean>('CROSS_SITE_AUTH', false);
+
     res.cookie(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
-      sameSite: 'lax',
-      secure:
-        this.configService.get<string>('NODE_ENV', 'development') ===
-        'production',
+      sameSite: crossSite ? 'none' : 'lax',
+      secure: isProd || crossSite,
       path: '/',
       maxAge: COOKIE_MAX_AGE_MS,
     });
