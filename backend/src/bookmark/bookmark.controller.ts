@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   Controller,
+  Get,
+  Param,
   Post,
   UploadedFile,
   UseInterceptors,
@@ -22,7 +24,7 @@ export class BookmarkController {
       limits: {
         fileSize: 5 * 1024 * 1024,
       },
-      fileFilter: (req, file, cb) => {
+      fileFilter: (_, file, cb) => {
         const isHtml =
           file.mimetype === 'text/html' ||
           file.originalname.toLowerCase().endsWith('.html');
@@ -48,5 +50,15 @@ export class BookmarkController {
     const html = file.buffer.toString('utf-8');
 
     return this.bookmarkService.importFromHtml(html, user.sub);
+  }
+
+  @Get('check-all')
+  async checkAll(@CurrentUser() user: GuestPayload) {
+    return this.bookmarkService.batchCheck(user.sub);
+  }
+
+  @Get(':id/check')
+  async checkOne(@Param('id') id: string, @CurrentUser() user: GuestPayload) {
+    return this.bookmarkService.checkOne(id, user.sub);
   }
 }
