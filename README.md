@@ -1,81 +1,148 @@
-# Manhwa/Manga Bookmark Tracker
+# Chapter Tracker
 
-A website that imports your manga/manhwa bookmarks from a browser export, tracks the latest chapter for each series, and pops up a notification when a new chapter drops — no account required.
+Chapter Tracker imports a browser bookmark export, keeps links from supported manga and manhwa sites, and shows whether a newer chapter is available. It is designed to work without an account: each library belongs to the browser that created it.
+
+## What it does
+
+- Imports `.html` bookmark exports from Chrome, Firefox, Safari, and Edge.
+- Recognizes supported series links, retrieves the latest chapter, and saves the result in a private library.
+- Rechecks saved series when the library opens and highlights new chapters.
+- Keeps the session in an HTTP-only cookie; no email address or password is required.
+- Uses per-site request limits and Redis caching to reduce unnecessary scraping.
 
 ## How it works
 
-1. **Import** — Export your browser bookmarks as an HTML file and upload it. The backend parses the file, matches each bookmarked URL against a set of known site adapters, and extracts a site + series slug for each recognized bookmark.
-2. **Track** — Each bookmark is stored with its last-known chapter number.
-3. **Check** — When you open the site, the backend fetches the current chapter for each tracked series directly from the source site (on-demand, not via background cron).
-4. **Notify** — If the fetched chapter number is greater than what's stored, a popup surfaces the update. The stored chapter is updated once you've seen/read it.
-5. **No login** — You're identified by a signed, HTTP-only JWT stored in a cookie, issued automatically on first visit. No email, no password, no account creation.
+```text
+Browser bookmark export
+        |
+        v
+React + Vite frontend
+        |
+        | POST /bookmark/import (credentialed request)
+        v
+NestJS API
+  |-- reads and filters bookmark links
+  |-- matches a supported site and extracts its series slug
+  |-- scrapes the latest chapter with safe per-site concurrency
+  |-- caches scrape results in Redis for 10 minutes
+  '-- saves bookmarks and chapter state in PostgreSQL
+        |
+        v
+Library displays imported series and new-chapter updates
+```
 
-## Supported sites (v1)
+### Guest-session flow
 
-Adapters exist for a fixed set of known manga/manhwa sites (site-specific URL parsing + chapter scraping per site, rather than a generic scraper). Currently includes both licensed platforms (WEBTOON, MangaDex, Manga Plus, Tapas, Viz, Bilibili Manga) and scanlation aggregators (Asura Scans, Mangakakalot).
+1. The frontend requests `GET /auth/session`.
+2. A first-time visitor receives `401`, which simply means no guest cookie exists yet.
+3. The frontend creates one with `POST /auth/guest`.
+4. The backend creates a guest user, signs a JWT, and returns an HTTP-only `jwtAuthToken` cookie.
+5. Later API requests include that cookie, so the guard can scope every bookmark query to that guest user.
 
-> **Note:** Scanlation aggregator domains change frequently (Asura Scans alone has migrated domains 10+ times historically). Site configs are designed to be updatable without a full redeploy — see [Site Adapters](#site-adapters) below.
+The `401` on the first check is expected. A `404` during startup usually means the frontend called the wrong session-creation route; it must call `/auth/guest`, not `/auth`.
+
+## Supported sources
+
+| Source | URL pattern |
+| --- | --- |
+| AsuraScans | `asurascans.com/comics/<series>` |
+| KingOfShojo | `kingofshojo.com/manga/<series>` |
+
+Links from all other sites are deliberately skipped and reported in the import summary. This avoids saving links that cannot be reliably checked.
 
 ## Tech stack
 
-- **Backend:** NestJS, Prisma ORM, SQLite
-- **Auth:** Anonymous sessions via signed JWT in an HTTP-only cookie (`GuestAuthGuard`), no user accounts
-- **Bookmark parsing:** `cheerio` (parses the standard Netscape Bookmark HTML format used by all major browser exports)
-- **File upload:** `@nestjs/platform-express` + `multer` (in-memory, no disk writes)
-- **Validation:** Zod
+- Frontend: React, Vite, TypeScript, TanStack Query, Axios, Tailwind CSS
+- Backend: NestJS, TypeScript, Prisma, JWT, cookie-parser
+- Database: PostgreSQL in production (Neon recommended)
+- Cache: Redis (Upstash recommended)
+- Hosting: Vercel for the frontend and Render for the backend
 
-## Project structure
+## Development setup
 
-```
-src/
-├── auth/
-│   ├── guards/
-│   │   └── guest-auth.guard.ts      # issues/verifies the anonymous session cookie
-│   ├── decorators/
-│   │   └── current-user.decorator.ts
-│   └── types/
-│       └── guest-payload.type.ts    # Zod schema + type for the JWT payload
-├── bookmarks/
-│   ├── bookmark.controller.ts       # POST /bookmarks/import
-│   ├── bookmark.service.ts          # HTML parsing + DB upsert
-│   └── site-matchers.ts             # per-site URL → slug extraction
-├── prisma/
-│   ├── schema.prisma
-│   └── prisma.service.ts
-└── main.ts
-```
+### Prerequisites
 
-## Data model
+- Node.js 20 or newer
+- PostgreSQL (or the existing local SQLite setup while developing before the production migration)
+- Redis, or a reachable Upstash Redis database
 
-- **User** — one row per anonymous session (`id` = the `sub` claim from the JWT)
-- **Bookmark** — belongs to a User; stores `url`, `site`, `slug`, `lastChapter`, `lastCheckedAt`, `isRead`
-
-## Site adapters
-
-Each supported site needs two things:
-1. A **slug extractor** — pulls the series identifier out of a bookmarked URL (used during import)
-2. A **chapter scraper** — given a slug, fetches the current latest chapter from the site
-
-To reduce redeploys when an aggregator site migrates domains, site configs (domain, URL pattern, chapter selector) are intended to move into a DB-backed table rather than staying hardcoded, so a domain change is a data update, not a code change.
-
-## Setup
+### Backend
 
 ```bash
+cd backend
 npm install
-npx prisma migrate dev
+cp .env.example .env
+npm run prisma:generate
 npm run start:dev
 ```
 
-Environment variables (`.env`):
-```
-DATABASE_URL="file:./dev.db"
-JWT_SECRET=your-secret-here
-NODE_ENV=development
+### Frontend
+
+```bash
+cd frontend
+npm install
+printf 'VITE_API_URL=http://localhost:4000\n' > .env
+npm run dev
 ```
 
-## Known limitations (v1)
+The frontend runs at `http://localhost:5173` and the API normally runs at `http://localhost:4000`. This is for contributor development only; the application is intended to be deployed.
 
-- Update checks are on-demand (triggered by opening the site), not scheduled — first load after a while may be slower for users with many bookmarks.
-- Bookmark import requires a manual browser export; there's no live sync from the browser.
-- Anonymous sessions are tied to a single browser cookie — clearing cookies or switching devices loses access to existing bookmarks.
-- Scanlation aggregator adapters require ongoing maintenance as those sites change domains/layouts.
+## Production deployment
+
+Use this deployment shape:
+
+```text
+Vercel frontend  ->  Render NestJS API  ->  Neon Postgres
+                                        ->  Upstash Redis
+```
+
+Before deploying, migrate the Prisma datasource from SQLite to PostgreSQL, use the PostgreSQL Prisma driver adapter, and generate a fresh PostgreSQL migration. Never put production credentials in Git.
+
+Set these backend variables in Render:
+
+```text
+NODE_ENV=production
+DATABASE_URL=<Neon pooled PostgreSQL URL>
+REDIS_URL=<Upstash TCP rediss:// URL>
+JWT_SECRET=<new long random secret>
+FRONTEND_URL=https://<your-vercel-domain>
+CROSS_SITE_AUTH=true
+```
+
+Set this Vercel build variable:
+
+```text
+VITE_API_URL=https://<your-render-api-domain>
+```
+
+Use HTTPS for both deployments. Cross-site authentication requires `SameSite=None; Secure` cookies, which browsers only send over HTTPS.
+
+## Source roadmap
+
+Future source support should be added only after checking each site's terms, robots guidance, rate limits, and whether an official API is available. Prefer official platforms and APIs where possible. Each site needs a URL matcher, scraper, tests, safe rate limit, and fixtures—see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Recommended candidates, chosen for broad reader reach and official/public availability rather than any individual user's bookmarks:
+
+1. **MangaDex** — investigate its documented API before considering page scraping.
+2. **WEBTOON** — a major official webcomic platform with frequent updates.
+3. **MANGA Plus by SHUEISHA** — a major official manga platform.
+4. **Tapas** — official English webcomics and novels platform.
+5. **Tappytoon** — official Korean comics and novels catalogue.
+6. **Manta** — official manhwa, manga, and novel platform.
+7. **Lezhin Comics** — official webtoon platform.
+8. **Toomics** — official webtoon platform.
+9. **Comikey** — official manga and webtoon platform.
+10. **Pocket Comics** — official webtoon and manga platform.
+11. **Naver WEBTOON Korea** — a major Korean webtoon catalogue; assess localization and access constraints first.
+
+Some sources have dynamic pages, authentication, anti-bot controls, paid chapters, or terms that prohibit automated access. Those sources should not be added until there is a compliant way to retrieve public update metadata.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+
+## Privacy and limitations
+
+- Libraries are tied to a browser cookie. Clearing site data or changing browsers removes access to that anonymous library.
+- The app tracks public chapter metadata; it does not host or distribute comic content.
+- A successful import means links were saved. A source may still fail a later check if its public page changes or is unavailable.
