@@ -1,8 +1,8 @@
-import { Session, type guestSessionResponseType, type sessionType } from "../type/auth.type";
+  import { Session, type guestSessionResponseType, type sessionType } from "../type/auth.type";
 import { api } from "./apiInstance.api";
 
 export const createGuestSessionApi = async (): Promise<sessionType> => {
-  const { data } = await api.post<guestSessionResponseType>("/auth");
+  const { data } = await api.post<guestSessionResponseType>("/auth/guest");
   return {
     guestId: data.guestId,
     isGuest: true,
