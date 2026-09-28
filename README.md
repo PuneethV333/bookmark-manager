@@ -2,6 +2,28 @@
 
 Chapter Tracker imports a browser bookmark export, keeps links from supported manga and manhwa sites, and shows whether a newer chapter is available. It is designed to work without an account: each library belongs to the browser that created it.
 
+## Live demo
+
+[Open Chapter Tracker](https://bookmark-manager-zeta.vercel.app/)
+
+The deployed frontend has been checked on September 28, 2026:
+
+- The landing page loads correctly.
+- Client-side navigation to the empty Library view works and creates/uses the anonymous session.
+- Imports were not tested against a personal bookmark export in the public deployment.
+
+### Known deployment issue
+
+The `/home` route works through client-side navigation but returns a Vercel `404` when opened directly or refreshed. Add this file at `frontend/vercel.json`, commit it, and redeploy:
+
+```json
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+```
+
+This lets React Router handle `/home` after Vercel has served the app shell.
+
 ## What it does
 
 - Imports `.html` bookmark exports from Chrome, Firefox, Safari, and Edge.
@@ -116,6 +138,8 @@ VITE_API_URL=https://<your-render-api-domain>
 ```
 
 Use HTTPS for both deployments. Cross-site authentication requires `SameSite=None; Secure` cookies, which browsers only send over HTTPS.
+
+For Vercel, use `frontend` as the project root directory, `npm run build` as the build command, and `dist` as the output directory. Add the SPA rewrite shown in the Live demo section so direct links and browser refreshes work.
 
 ## Source roadmap
 
