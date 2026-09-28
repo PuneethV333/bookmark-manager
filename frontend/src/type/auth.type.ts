@@ -3,7 +3,7 @@ import { z } from "zod";
 export const Session = z.object({
   guestId: z.string(),
   isGuest: z.boolean(),
-  expiresAt: z.string().nullable(),
+  expiresAt: z.iso.datetime().nullable(),
 });
 
 export type sessionType = z.infer<typeof Session>;
