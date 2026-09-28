@@ -496,4 +496,21 @@ export class BookmarksService {
         .length,
     };
   }
+
+  async findAll(userId: string) {
+    return this.prisma.bookmark.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        url: true,
+        title: true,
+        site: true,
+        slug: true,
+        comicProfilePic: true,
+        lastChapter: true,
+        lastCheckedAt: true,
+      },
+    });
+  }
 }

@@ -65,4 +65,10 @@ export class BookmarkController {
   async checkOne(@Param('id') id: string, @CurrentUser() user: GuestPayload) {
     return this.bookmarkService.checkOne(id, user.sub);
   }
+
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get()
+  async listBookmarks(@CurrentUser() user: GuestPayload) {
+    return this.bookmarkService.findAll(user.sub);
+  }
 }
