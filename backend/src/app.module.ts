@@ -7,9 +7,10 @@ import { AppService } from './app.service';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
-import { AuthModule } from './auth/auth.module';
 import { LoggerModule } from './logger/logger.module';
 import { BookmarkModule } from './bookmark/bookmark.module';
+import { AuthModule } from './auth/auth.module';
+import { FirebaseAuthGuard } from './common/guards/firebase-auth.guard';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { BookmarkModule } from './bookmark/bookmark.module';
       useFactory: (configService: ConfigService) => ({
         throttlers: [
           {
-            ttl: configService.get<number>('THROTTLE_TTL', 60),
+            ttl: configService.get<number>('THROTTLE_TTL', 60_000),
             limit: configService.get<number>('THROTTLE_LIMIT', 100),
           },
         ],
@@ -40,6 +41,10 @@ import { BookmarkModule } from './bookmark/bookmark.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: FirebaseAuthGuard,
     },
   ],
 })

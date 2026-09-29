@@ -10,6 +10,8 @@ import { scrapeKingOfShojo } from './scraper/kingofshojo';
 
 const SCRAPE_CACHE_TTL_SECONDS = 10 * 60;
 const STALE_AFTER_MINUTES = 5;
+const SCRAPE_CONCURRENCY_PER_SITE = 3;
+const DB_WRITE_CONCURRENCY = 10;
 
 function scrapeCacheKey(site: string, slug: string): string {
   return `scrape:${site}:${slug}`;
@@ -19,12 +21,19 @@ function isMatchingDomain(hostname: string, domain: string): boolean {
   return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
-function matchBookmarkToSite(url: string): {
-  site: string;
-  slug: string;
-} | null {
+function matchBookmarkToSite(
+  url: string,
+): { site: string; slug: string } | null {
   try {
-    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    const parsed = new URL(url);
+
+    // Bookmark exports can contain javascript:, file:, place: ... links.
+    // Only ever fetch http(s).
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    const hostname = parsed.hostname.replace(/^www\./, '');
 
     for (const [domain, extractSlug] of Object.entries(SITE_MATCHERS)) {
       if (!isMatchingDomain(hostname, domain)) {
@@ -52,14 +61,34 @@ type ScrapedChapter = {
   image?: string;
 };
 
-type ScraperResult = ScrapedChapter | null;
+type Scraper = (url: string) => Promise<ScrapedChapter | null>;
 
-type Scraper = (url: string) => Promise<ScraperResult>;
+type SiteLimiter = (site: string) => ReturnType<typeof pLimit>;
 
 const SCRAPERS: Record<string, Scraper> = {
   'asurascans.com': scrapeAsuraScans,
   'kingofshojo.com': scrapeKingOfShojo,
 };
+
+/** One concurrency limiter per site, so we stay polite to each origin. */
+function createSiteLimiter(): SiteLimiter {
+  const limiters = new Map<string, ReturnType<typeof pLimit>>();
+
+  return (site: string) => {
+    let limiter = limiters.get(site);
+
+    if (!limiter) {
+      limiter = pLimit(SCRAPE_CONCURRENCY_PER_SITE);
+      limiters.set(site, limiter);
+    }
+
+    return limiter;
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 @Injectable()
 export class BookmarksService {
@@ -70,13 +99,67 @@ export class BookmarksService {
     private readonly redis: RedisService,
   ) {}
 
-  async importFromHtml(html: string, userId: string) {
+  /**
+   * Latest chapter for a bookmark: Redis cache first, then the site scraper.
+   * Returns null when the site has no scraper or the scrape failed.
+   * Never throws.
+   */
+  private async getLatestChapter(
+    bookmark: { url: string; site: string; slug: string },
+    limiterFor?: SiteLimiter,
+  ): Promise<ScrapedChapter | null> {
+    const scraper = SCRAPERS[bookmark.site];
+
+    if (!scraper) {
+      return null;
+    }
+
+    const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
+
+    const cached = await this.redis
+      .get<ScrapedChapter>(cacheKey)
+      .catch(() => null);
+
+    if (cached) {
+      return cached;
+    }
+
+    const run = () => scraper(bookmark.url);
+
+    const scraped = await (
+      limiterFor ? limiterFor(bookmark.site)(run) : run()
+    ).catch((error: unknown) => {
+      this.logger.warn(
+        `Chapter scrape failed for ${bookmark.url}: ${errorMessage(error)}`,
+      );
+      return null;
+    });
+
+    if (!scraped) {
+      return null;
+    }
+
+    // Cache only what we use, not the scraper's whole payload.
+    const result: ScrapedChapter = {
+      number: scraped.number,
+      image: scraped.image,
+    };
+
+    await this.redis
+      .set(cacheKey, result, SCRAPE_CACHE_TTL_SECONDS)
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Failed to cache scrape result: ${errorMessage(error)}`,
+        );
+      });
+
+    return result;
+  }
+
+  async importFromHtml(html: string, firebaseUid: string) {
     const $ = cheerio.load(html);
 
-    const links: {
-      url: string;
-      title: string;
-    }[] = [];
+    const links: { url: string; title: string }[] = [];
 
     $('a').each((_, el) => {
       const href = $(el).attr('href');
@@ -91,239 +174,149 @@ export class BookmarksService {
       });
     });
 
-    const matched = links
-      .map((link) => {
-        const match = matchBookmarkToSite(link.url);
-
-        if (!match) {
-          return null;
-        }
-
-        return {
-          ...link,
-          ...match,
-        };
-      })
-      .filter(
-        (
-          bookmark,
-        ): bookmark is {
-          url: string;
-          title: string;
-          site: string;
-          slug: string;
-        } => bookmark !== null,
-      );
+    const matched = links.flatMap((link) => {
+      const match = matchBookmarkToSite(link.url);
+      return match ? [{ ...link, ...match }] : [];
+    });
 
     const deduped = Array.from(
       new Map(matched.map((bookmark) => [bookmark.url, bookmark])).values(),
     );
 
-    const skipped = links.length - deduped.length;
+    // Links that aren't a supported comic page (other sites, folders, junk).
+    const skipped = links.length - matched.length;
+
+    if (deduped.length === 0) {
+      return {
+        imported: 0,
+        skipped,
+        failedScrapes: 0,
+      };
+    }
 
     const existing = await this.prisma.bookmark.findMany({
       where: {
-        userId,
-        url: { in: deduped.map((bookmark) => bookmark.url) },
+        firebaseUid,
+        url: {
+          in: deduped.map((bookmark) => bookmark.url),
+        },
       },
-      select: { url: true, lastChapter: true, comicProfilePic: true },
+      select: {
+        url: true,
+        lastChapter: true,
+        comicProfilePic: true,
+      },
     });
-    const existingChapterByUrl = new Map(
-      existing.map((bookmark) => [bookmark.url, bookmark.lastChapter]),
-    );
-    const existingImageByUrl = new Map(
-      existing.map((bookmark) => [bookmark.url, bookmark.comicProfilePic]),
+
+    const existingByUrl = new Map(
+      existing.map((bookmark) => [bookmark.url, bookmark]),
     );
 
-    /*
-     * Limit concurrent requests PER SITE.
-     *
-     * Example:
-     *   Asura      -> max 3 concurrent requests
-     *   KingShojo  -> max 3 concurrent requests
-     *
-     * Different sites can still be scraped concurrently.
-     */
-    const limiters = new Map<string, ReturnType<typeof pLimit>>();
+    const limiterFor = createSiteLimiter();
 
-    const limiterFor = (site: string) => {
-      let limiter = limiters.get(site);
-
-      if (!limiter) {
-        limiter = pLimit(3);
-        limiters.set(site, limiter);
-      }
-
-      return limiter;
-    };
-
-    /*
-     * Scrape the latest chapter for every supported bookmark.
-     */
     const withChapters = await Promise.all(
       deduped.map(async (bookmark) => {
-        const scraper = SCRAPERS[bookmark.site];
+        const previous = existingByUrl.get(bookmark.url);
+        const existingChapter = previous?.lastChapter ?? null;
+        const existingImage = previous?.comicProfilePic ?? null;
+
+        const hasScraper = SCRAPERS[bookmark.site] !== undefined;
+        const result = await this.getLatestChapter(bookmark, limiterFor);
 
         /*
-         * Site is recognized by SITE_MATCHERS but does not
-         * have a scraper implementation yet.
+         * Never move lastChapter backwards.
          */
-        if (!scraper) {
-          return {
-            ...bookmark,
-            lastChapter: null,
-            comicProfilePic: existingImageByUrl.get(bookmark.url) ?? null,
-            lastCheckedAt: null,
-          };
-        }
-
-        const limit = limiterFor(bookmark.site);
-        const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
-
-        let result = await this.redis
-          .get<ScrapedChapter>(cacheKey)
-          .catch(() => null);
-
-        if (!result) {
-          result = await limit(() => scraper(bookmark.url)).catch(
-            (error: unknown) => {
-              const message =
-                error instanceof Error ? error.message : String(error);
-
-              this.logger.warn(
-                `Chapter scrape failed for ${bookmark.url}: ${message}`,
-              );
-
-              return null;
-            },
-          );
-
-          if (result) {
-            await this.redis
-              .set(cacheKey, result, SCRAPE_CACHE_TTL_SECONDS)
-              .catch((error: unknown) => {
-                const message =
-                  error instanceof Error ? error.message : String(error);
-                this.logger.warn(`Failed to cache scrape result: ${message}`);
-              });
-          }
-        }
-
-        const existingChapter = existingChapterByUrl.get(bookmark.url) ?? null;
-
         const lastChapter = result
           ? Math.max(result.number, existingChapter ?? result.number)
-          : null;
+          : existingChapter;
 
         return {
           ...bookmark,
           lastChapter,
-
-          // Keep the previous image if this scrape didn't find one —
-          // never regress a known-good image to null.
-          comicProfilePic:
-            result?.image ?? existingImageByUrl.get(bookmark.url) ?? null,
-
+          comicProfilePic: result?.image ?? existingImage,
           lastCheckedAt: result ? new Date() : null,
+          scrapeFailed: hasScraper && result === null,
         };
       }),
     );
 
+    // Bound concurrent writes: an export can hold thousands of links and the
+    // connection pool is small.
+    const dbLimit = pLimit(DB_WRITE_CONCURRENCY);
+
     const results = await Promise.all(
       withChapters.map((bookmark) =>
-        this.prisma.bookmark.upsert({
-          where: {
-            userId_url: {
-              userId,
-              url: bookmark.url,
+        dbLimit(() =>
+          this.prisma.bookmark.upsert({
+            where: {
+              firebaseUid_url: {
+                firebaseUid,
+                url: bookmark.url,
+              },
             },
-          },
 
-          update:
-            bookmark.lastChapter !== null
-              ? {
-                  lastChapter: bookmark.lastChapter,
-                  lastCheckedAt: bookmark.lastCheckedAt,
-                  comicProfilePic: bookmark.comicProfilePic,
-                }
-              : {},
+            update: {
+              ...(bookmark.lastChapter !== null
+                ? { lastChapter: bookmark.lastChapter }
+                : {}),
 
-          create: {
-            userId,
-            url: bookmark.url,
-            title: bookmark.title || null,
-            site: bookmark.site,
-            slug: bookmark.slug,
-            lastChapter: bookmark.lastChapter,
-            lastCheckedAt: bookmark.lastCheckedAt,
-            comicProfilePic: bookmark.comicProfilePic,
-          },
-        }),
+              ...(bookmark.lastCheckedAt
+                ? { lastCheckedAt: bookmark.lastCheckedAt }
+                : {}),
+
+              ...(bookmark.comicProfilePic
+                ? { comicProfilePic: bookmark.comicProfilePic }
+                : {}),
+            },
+
+            create: {
+              firebaseUid,
+              url: bookmark.url,
+              title: bookmark.title || null,
+              site: bookmark.site,
+              slug: bookmark.slug,
+              lastChapter: bookmark.lastChapter,
+              lastCheckedAt: bookmark.lastCheckedAt,
+              comicProfilePic: bookmark.comicProfilePic,
+            },
+          }),
+        ),
       ),
     );
-
-    const failedScrapes = withChapters.filter(
-      (bookmark) => bookmark.lastChapter === null,
-    ).length;
 
     return {
       imported: results.length,
       skipped,
-      failedScrapes,
+      failedScrapes: withChapters.filter((bookmark) => bookmark.scrapeFailed)
+        .length,
     };
   }
 
-  /**
-   * Individual check: re-scrape one bookmark right now (cache-first)
-   * and report whether a new chapter is available. lastChapter is only
-   * bumped when the scrape succeeded and the number actually moved
-   * forward; a failed scrape leaves stored data untouched.
-   */
-  async checkOne(id: string, userId: string) {
+  async checkOne(id: string, firebaseUid: string) {
+    /*
+     * IMPORTANT:
+     * Always include firebaseUid in the lookup.
+     *
+     * Otherwise a user could potentially check another user's
+     * bookmark if they know/guess its ID.
+     */
     const bookmark = await this.prisma.bookmark.findFirst({
-      where: { id, userId },
+      where: {
+        id,
+        firebaseUid,
+      },
     });
 
     if (!bookmark) {
       throw new NotFoundException('Bookmark not found');
     }
 
-    const scraper = SCRAPERS[bookmark.site];
-    if (!scraper) {
-      return {
-        id: bookmark.id,
-        lastChapter: bookmark.lastChapter,
-        hasNewChapter: false,
-        checked: false,
-      };
-    }
+    const result = await this.getLatestChapter(bookmark);
 
-    const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
-
-    let result = await this.redis
-      .get<ScrapedChapter>(cacheKey)
-      .catch(() => null);
-
-    if (!result) {
-      result = await scraper(bookmark.url).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `Chapter scrape failed for ${bookmark.url}: ${message}`,
-        );
-        return null;
-      });
-
-      if (result) {
-        await this.redis
-          .set(cacheKey, result, SCRAPE_CACHE_TTL_SECONDS)
-          .catch((error: unknown) => {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            this.logger.warn(`Failed to cache scrape result: ${message}`);
-          });
-      }
-    }
-
+    /*
+     * No scraper, or failed scrape:
+     * do not modify lastChapter or lastCheckedAt.
+     */
     if (!result) {
       return {
         id: bookmark.id,
@@ -336,18 +329,24 @@ export class BookmarksService {
     const hasNewChapter =
       bookmark.lastChapter === null || result.number > bookmark.lastChapter;
 
+    /*
+     * Never decrease lastChapter.
+     */
+    const newLastChapter = Math.max(
+      bookmark.lastChapter ?? result.number,
+      result.number,
+    );
+
     const updated = await this.prisma.bookmark.update({
-      where: { id: bookmark.id },
-      data: hasNewChapter
-        ? {
-            lastChapter: result.number,
-            lastCheckedAt: new Date(),
-            comicProfilePic: result.image ?? bookmark.comicProfilePic,
-          }
-        : {
-            lastCheckedAt: new Date(),
-            comicProfilePic: result.image ?? bookmark.comicProfilePic,
-          },
+      where: {
+        id: bookmark.id,
+      },
+
+      data: {
+        lastChapter: newLastChapter,
+        lastCheckedAt: new Date(),
+        comicProfilePic: result.image ?? bookmark.comicProfilePic,
+      },
     });
 
     return {
@@ -358,15 +357,12 @@ export class BookmarksService {
     };
   }
 
-  /**
-   * Batch check: re-scrape every bookmark for the user (cache-first,
-   * per-site rate limited) and report which ones moved forward.
-   * Bookmarks checked more recently than STALE_AFTER_MINUTES are
-   * skipped so this doesn't re-hit sites you already just checked.
-   */
-  async batchCheck(userId: string) {
+  async batchCheck(firebaseUid: string) {
     const bookmarks = await this.prisma.bookmark.findMany({
-      where: { userId },
+      where: {
+        firebaseUid,
+      },
+
       select: {
         id: true,
         url: true,
@@ -381,15 +377,8 @@ export class BookmarksService {
 
     const staleBefore = new Date(Date.now() - STALE_AFTER_MINUTES * 60_000);
 
-    const limiters = new Map<string, ReturnType<typeof pLimit>>();
-    const limiterFor = (site: string) => {
-      let limiter = limiters.get(site);
-      if (!limiter) {
-        limiter = pLimit(3);
-        limiters.set(site, limiter);
-      }
-      return limiter;
-    };
+    const limiterFor = createSiteLimiter();
+    const dbLimit = pLimit(DB_WRITE_CONCURRENCY);
 
     const results = await Promise.all(
       bookmarks.map(async (bookmark) => {
@@ -408,47 +397,12 @@ export class BookmarksService {
           };
         }
 
-        const scraper = SCRAPERS[bookmark.site];
-        if (!scraper) {
-          return {
-            id: bookmark.id,
-            title: bookmark.title,
-            lastChapter: bookmark.lastChapter,
-            hasNewChapter: false,
-            checked: false,
-          };
-        }
+        const result = await this.getLatestChapter(bookmark, limiterFor);
 
-        const cacheKey = scrapeCacheKey(bookmark.site, bookmark.slug);
-        const limit = limiterFor(bookmark.site);
-
-        let result = await this.redis
-          .get<ScrapedChapter>(cacheKey)
-          .catch(() => null);
-
-        if (!result) {
-          result = await limit(() => scraper(bookmark.url)).catch(
-            (error: unknown) => {
-              const message =
-                error instanceof Error ? error.message : String(error);
-              this.logger.warn(
-                `Chapter scrape failed for ${bookmark.url}: ${message}`,
-              );
-              return null;
-            },
-          );
-
-          if (result) {
-            await this.redis
-              .set(cacheKey, result, SCRAPE_CACHE_TTL_SECONDS)
-              .catch((error: unknown) => {
-                const message =
-                  error instanceof Error ? error.message : String(error);
-                this.logger.warn(`Failed to cache scrape result: ${message}`);
-              });
-          }
-        }
-
+        /*
+         * No scraper, or failed scrape:
+         * don't update the database.
+         */
         if (!result) {
           return {
             id: bookmark.id,
@@ -462,19 +416,24 @@ export class BookmarksService {
         const hasNewChapter =
           bookmark.lastChapter === null || result.number > bookmark.lastChapter;
 
-        const updated = await this.prisma.bookmark.update({
-          where: { id: bookmark.id },
-          data: hasNewChapter
-            ? {
-                lastChapter: result.number,
-                lastCheckedAt: new Date(),
-                comicProfilePic: result.image ?? bookmark.comicProfilePic,
-              }
-            : {
-                lastCheckedAt: new Date(),
-                comicProfilePic: result.image ?? bookmark.comicProfilePic,
-              },
-        });
+        const newLastChapter = Math.max(
+          bookmark.lastChapter ?? result.number,
+          result.number,
+        );
+
+        const updated = await dbLimit(() =>
+          this.prisma.bookmark.update({
+            where: {
+              id: bookmark.id,
+            },
+
+            data: {
+              lastChapter: newLastChapter,
+              lastCheckedAt: new Date(),
+              comicProfilePic: result.image ?? bookmark.comicProfilePic,
+            },
+          }),
+        );
 
         return {
           id: updated.id,
@@ -488,19 +447,35 @@ export class BookmarksService {
 
     return {
       total: results.length,
-      checked: results.filter((r) => r.checked).length,
-      newChapters: results.filter((r) => r.hasNewChapter),
-      failed: results.filter((r) => r.checked === false && !r.skippedReason)
-        .length,
-      skipped: results.filter((r) => r.skippedReason === 'recently checked')
-        .length,
+
+      checked: results.filter((result) => result.checked).length,
+
+      newChapters: results.filter((result) => result.hasNewChapter),
+
+      failed: results.filter(
+        (result) =>
+          result.checked === false &&
+          !('skippedReason' in result && result.skippedReason),
+      ).length,
+
+      skipped: results.filter(
+        (result) =>
+          'skippedReason' in result &&
+          result.skippedReason === 'recently checked',
+      ).length,
     };
   }
 
-  async findAll(userId: string) {
+  async findAll(firebaseUid: string) {
     return this.prisma.bookmark.findMany({
-      where: { userId },
-      orderBy: { updatedAt: 'desc' },
+      where: {
+        firebaseUid,
+      },
+
+      orderBy: {
+        updatedAt: 'desc',
+      },
+
       select: {
         id: true,
         url: true,

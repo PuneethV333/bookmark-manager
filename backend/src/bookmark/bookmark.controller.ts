@@ -10,9 +10,9 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { BookmarksService } from './bookmark.service';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { GuestPayload } from '../auth/types/guest-payload.type';
 import { Throttle } from '@nestjs/throttler';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { FirebaseUser } from '../common/guards/firebase-auth.guard';
 
 @Controller('bookmark')
 export class BookmarkController {
@@ -43,7 +43,7 @@ export class BookmarkController {
   )
   async importBookmarks(
     @UploadedFile() file: Express.Multer.File,
-    @CurrentUser() user: GuestPayload,
+    @CurrentUser() user: FirebaseUser,
   ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -51,24 +51,24 @@ export class BookmarkController {
 
     const html = file.buffer.toString('utf-8');
 
-    return this.bookmarkService.importFromHtml(html, user.sub);
+    return this.bookmarkService.importFromHtml(html, user.firebaseUid);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Get('check-all')
-  async checkAll(@CurrentUser() user: GuestPayload) {
-    return this.bookmarkService.batchCheck(user.sub);
+  async checkAll(@CurrentUser() user: FirebaseUser) {
+    return this.bookmarkService.batchCheck(user.firebaseUid);
   }
 
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get(':id/check')
-  async checkOne(@Param('id') id: string, @CurrentUser() user: GuestPayload) {
-    return this.bookmarkService.checkOne(id, user.sub);
+  async checkOne(@Param('id') id: string, @CurrentUser() user: FirebaseUser) {
+    return this.bookmarkService.checkOne(id, user.firebaseUid);
   }
 
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get()
-  async listBookmarks(@CurrentUser() user: GuestPayload) {
-    return this.bookmarkService.findAll(user.sub);
+  async listBookmarks(@CurrentUser() user: FirebaseUser) {
+    return this.bookmarkService.findAll(user.firebaseUid);
   }
 }

@@ -1,15 +1,8 @@
 import { z } from "zod";
 
-export const Session = z.object({
-  guestId: z.string(),
-  isGuest: z.boolean(),
-  expiresAt: z.iso.datetime().nullable(),
+/** Response of POST /auth/sync: the internal user row for the signed-in Firebase user. */
+export const SyncResponse = z.object({
+  id: z.string(),
 });
 
-export type sessionType = z.infer<typeof Session>;
-
-export const GuestSessionResponse = z.object({
-  guestId: z.string(),
-});
-
-export type guestSessionResponseType = z.infer<typeof GuestSessionResponse>;
+export type SyncResponseType = z.infer<typeof SyncResponse>;
