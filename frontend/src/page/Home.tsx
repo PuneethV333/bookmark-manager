@@ -8,7 +8,6 @@ import EmptyState from "../components/EmptyState";
 import Navbar from "../components/Navbar";
 import NewReleasesBanner from "../components/NewReleasesBanner";
 import StatusBar from "../components/StatusBar";
-import { useSession } from "../hooks/useAuth";
 import { useBookmarks } from "../hooks/useBookmark";
 import { useLibraryChecks } from "../hooks/useLibraryChecks";
 import type { Bookmark } from "../type/bookmark.type";
@@ -19,7 +18,6 @@ import Library from "./Library";
 const NO_BOOKMARKS: Bookmark[] = [];
 
 const Home = () => {
-  const session = useSession();
   const bookmarksQuery = useBookmarks();
   const bookmarks = bookmarksQuery.data ?? NO_BOOKMARKS;
 
@@ -50,10 +48,10 @@ const Home = () => {
     [bookmarks, updates],
   );
 
-  const failed = session.isError || bookmarksQuery.isError;
-  const loading = !failed && (session.isPending || bookmarksQuery.isPending);
+  const failed = bookmarksQuery.isError;
+  const loading = !failed && bookmarksQuery.isPending;
 
-  const retry = () => (session.isError ? void session.refetch() : void bookmarksQuery.refetch());
+  const retry = () => void bookmarksQuery.refetch();
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -72,7 +70,7 @@ const Home = () => {
           <EmptyState
             icon={<FiAlertCircle aria-hidden />}
             title="Couldn't load your library"
-            description={getErrorMessage(session.error ?? bookmarksQuery.error)}
+            description={getErrorMessage(bookmarksQuery.error)}
             action={<Button variant="secondary" onClick={retry}>Try again</Button>}
           />
         ) : loading ? (

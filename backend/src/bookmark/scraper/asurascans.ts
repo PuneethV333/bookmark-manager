@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ChapterInfo } from './kingofshojo';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
@@ -12,19 +11,6 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&amp;/g, '&');
 }
 
-/**
- * The chapter list is NOT rendered as static <a> tags — it's JSON passed
- * to a client-hydrated React island (<astro-island component-url=".../
- * ChapterListReact...">), so axios/cheerio never sees real chapter links.
- * The only static chapter link on the page is the "First Chapter" button,
- * which always points at chapter 1 — never use that for "latest".
- *
- * Instead, pull the chapter number straight out of the island's raw
- * `props` JSON. Entries appear newest-first, so the first "number" match
- * is the latest chapter. This is intentionally a narrow regex rather than
- * a full decode of Astro's tagged serialization format (props values are
- * wrapped as [typeTag, value] pairs) — we only need one field.
- */
 function extractLatestChapterFromIsland(html: string): number | null {
   const islandMatch = html.match(
     /<astro-island[^>]*component-url="\/_astro\/ChapterListReact[^"]*"[^>]*props="([^"]*)"/,
@@ -82,7 +68,12 @@ export const scrapeAsuraScans = async (
 
   let html: string;
   try {
-    const response = await axios.get(url, { timeout: 10_000 });
+    const response = await axios.get<string>(url, {
+      timeout: 10_000,
+      maxRedirects: 3,
+      maxContentLength: 5 * 1024 * 1024,
+      responseType: 'text',
+    });
     html = response.data;
   } catch {
     return null;

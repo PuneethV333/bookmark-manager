@@ -1,22 +1,16 @@
-import { Controller, Get, Post, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Controller, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { CurrentUser } from './decorators/current-user.decorator';
-import type { GuestPayload } from './types/guest-payload.type';
-import { Public } from './decorators/public.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { FirebaseUser } from '../common/guards/firebase-auth.guard';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Public()
-  @Post('guest')
-  async createGuestSession(@Res({ passthrough: true }) res: Response) {
-    return this.authService.createGuestSession(res);
-  }
-
-  @Get('session')
-  getSession(@CurrentUser() user: GuestPayload) {
-    return this.authService.getSession(user);
+  @Post('sync')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  sync(@CurrentUser() user: FirebaseUser) {
+    return this.authService.sync(user);
   }
 }

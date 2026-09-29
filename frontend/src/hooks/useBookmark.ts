@@ -1,5 +1,4 @@
 import {
-  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -10,25 +9,22 @@ import {
   importBookmarks,
   listBookmarks,
 } from "../api/bookmark.api";
-import { sessionQueryOptions } from "./useAuth";
+import { useFirebaseUid } from "./useAuth";
 
 export const bookmarkKeys = {
   all: ["bookmarks"] as const,
-  list: () => [...bookmarkKeys.all, "list"] as const,
+  // Keyed by uid so a cached library can never leak across accounts.
+  list: (uid: string) => [...bookmarkKeys.all, uid, "list"] as const,
 };
 
-export const bookmarksQueryOptions = queryOptions({
-  queryKey: bookmarkKeys.list(),
-  queryFn: listBookmarks,
-});
-
-/** Waits for the guest session, so the cookie exists before the first request. */
+/** Only runs once a Firebase user exists, so the request carries a valid token. */
 export function useBookmarks() {
-  const session = useQuery(sessionQueryOptions);
+  const { uid } = useFirebaseUid();
 
   return useQuery({
-    ...bookmarksQueryOptions,
-    enabled: session.isSuccess,
+    queryKey: bookmarkKeys.list(uid ?? ""),
+    queryFn: listBookmarks,
+    enabled: uid !== null,
   });
 }
 
@@ -41,10 +37,7 @@ export function useImportBookmarks() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file: File) => {
-      await queryClient.ensureQueryData(sessionQueryOptions);
-      return importBookmarks(file);
-    },
+    mutationFn: (file: File) => importBookmarks(file),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: bookmarkKeys.all }),
   });

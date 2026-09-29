@@ -18,7 +18,12 @@ export const scrapeKingOfShojo = async (
 
   let html: string;
   try {
-    const response = await axios.get(url, { timeout: 10_000 });
+    const response = await axios.get<string>(url, {
+      timeout: 10_000,
+      maxRedirects: 3,
+      maxContentLength: 5 * 1024 * 1024,
+      responseType: 'text',
+    });
     html = response.data;
   } catch {
     return null;

@@ -54,7 +54,7 @@ const LandingPage = () => {
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-12 sm:px-6 sm:py-16">
         <div className="text-center">
           <Badge className="mx-auto" icon={<span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}>
-            Anonymous session, no signup
+            Synced to your account
           </Badge>
           <h1 className="mx-auto mt-5 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-5xl sm:leading-[1.1]">
             Import your bookmarks. Catch every new chapter.
@@ -100,7 +100,7 @@ const LandingPage = () => {
             In your browser, press <kbd className="rounded border border-ink-600 px-1 font-mono text-xs">Ctrl+Shift+O</kbd>{" "}
             to open the bookmark manager, then choose Export bookmarks.
           </StepCard>
-          <StepCard step={2} icon={<FiUploadCloud aria-hidden />} title="Drop the file here" hint="No account needed">
+          <StepCard step={2} icon={<FiUploadCloud aria-hidden />} title="Drop the file here" hint="Saved to your account">
             Add the exported file above. We keep the series from supported sites and skip everything else.
           </StepCard>
           <StepCard step={3} icon={<FiBell aria-hidden />} title="See new chapters" hint="Checked whenever you open the site">
@@ -112,7 +112,7 @@ const LandingPage = () => {
       <footer className="border-t border-ink-700">
         <p className="mx-auto flex w-full max-w-6xl items-center gap-2 px-4 py-3 font-mono text-[11px] text-zinc-500 sm:px-6">
           <FiLock aria-hidden />
-          Your library is tied to this browser through an anonymous session cookie.
+          Your library is tied to your account, so it follows you to any browser.
         </p>
       </footer>
     </div>
