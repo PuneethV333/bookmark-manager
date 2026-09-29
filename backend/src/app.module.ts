@@ -10,7 +10,6 @@ import { RedisModule } from './redis/redis.module';
 import { AuthModule } from './auth/auth.module';
 import { LoggerModule } from './logger/logger.module';
 import { BookmarkModule } from './bookmark/bookmark.module';
-import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -34,7 +33,6 @@ import { HealthModule } from './health/health.module';
     AuthModule,
     LoggerModule,
     BookmarkModule,
-    HealthModule,
   ],
   controllers: [AppController],
   providers: [
