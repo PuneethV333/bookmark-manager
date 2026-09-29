@@ -12,6 +12,6 @@ jobs:
     steps:
       - name: Ping Render backend
         run: |
-          curl -fsS --max-time 30 "$RENDER_URL"
+          curl -fsS --max-time 120 "$RENDER_URL"
         env:
           RENDER_URL: ${{ secrets.RENDER_URL }}
