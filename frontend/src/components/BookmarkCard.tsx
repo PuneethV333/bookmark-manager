@@ -7,6 +7,7 @@ import { cn } from "../utils/cn";
 import { describeUpdate, formatChapter, formatSite, timeAgo } from "../utils/format";
 import { safeHttpUrl } from "../utils/url";
 import Badge from "./Badge";
+import BookmarkMenu from "./BookmarkMenu";
 import Button from "./Button";
 import CoverImage from "./CoverImage";
 
@@ -16,6 +17,7 @@ interface BookmarkCardProps {
   update?: NewChapter;
   onCheck: (bookmark: Bookmark) => void;
   onOpen: (bookmark: Bookmark) => void;
+  onDelete: (bookmark: Bookmark) => Promise<void>;
 }
 
 const borderByStatus: Record<BookmarkStatus, string> = {
@@ -25,7 +27,7 @@ const borderByStatus: Record<BookmarkStatus, string> = {
   issue: "border-rose-500/50",
 };
 
-const BookmarkCard = ({ bookmark, status, update, onCheck, onOpen }: BookmarkCardProps) => {
+const BookmarkCard = ({ bookmark, status, update, onCheck, onOpen, onDelete }: BookmarkCardProps) => {
   const title = bookmarkTitle(bookmark);
   const site = formatSite(bookmark.site);
   const href = safeHttpUrl(bookmark.url);
@@ -44,7 +46,8 @@ const BookmarkCard = ({ bookmark, status, update, onCheck, onOpen }: BookmarkCar
       <div className="relative aspect-[16/10] overflow-hidden bg-ink-800">
         <CoverImage key={bookmark.comicProfilePic ?? "none"} src={safeHttpUrl(bookmark.comicProfilePic)} className="h-full w-full" />
 
-        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+        <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+          <BookmarkMenu label={title} onDelete={() => onDelete(bookmark)} />
           {isNew && <Badge tone="success">NEW Ch. {formatChapter(update?.to ?? bookmark.lastChapter)}</Badge>}
           {isChecking && <Badge tone="info">Checking…</Badge>}
           {hasIssue && (

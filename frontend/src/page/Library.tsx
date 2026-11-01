@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { FiRefreshCw, FiSearch, FiUploadCloud } from "react-icons/fi";
+import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
+import { getErrorMessage } from "../api/apiInstance.api";
 import BookmarkCard from "../components/BookmarkCard";
 import Button from "../components/Button";
 import EmptyState from "../components/EmptyState";
@@ -9,10 +11,12 @@ import ProgressStrip from "../components/ProgressStrip";
 import SearchInput from "../components/SearchInput";
 import SelectField from "../components/SelectField";
 import type { LibraryChecks } from "../hooks/useLibraryChecks";
+import { useDeleteBookmark } from "../hooks/useBookmark";
 import type { Bookmark } from "../type/bookmark.type";
 import {
   ALL_SITES,
   applyLibraryView,
+  bookmarkTitle,
   countByStatus,
   getSites,
   type LibraryFilter,
@@ -40,6 +44,20 @@ const Library = ({ bookmarks, checks, filter, onFilterChange }: LibraryProps) =>
   const [sort, setSort] = useState<SortKey>("recent");
 
   const { statusOf, updates, isCheckingAll, checkAll, checkOne, markSeen } = checks;
+  const deleteMutation = useDeleteBookmark();
+
+  /** Deleting is permanent; the card menu asks for confirmation first. */
+  const handleDelete = async (bookmark: Bookmark) => {
+    const title = bookmarkTitle(bookmark);
+
+    try {
+      await deleteMutation.mutateAsync(bookmark.id);
+      toast.success(`${title} deleted.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      throw error;
+    }
+  };
 
   const sites = useMemo(() => getSites(bookmarks), [bookmarks]);
   const counts = useMemo(() => countByStatus(bookmarks, statusOf), [bookmarks, statusOf]);
@@ -130,6 +148,7 @@ const Library = ({ bookmarks, checks, filter, onFilterChange }: LibraryProps) =>
                 update={updates.get(bookmark.id)}
                 onCheck={checkOne}
                 onOpen={(item) => markSeen(item.id)}
+                onDelete={handleDelete}
               />
             </li>
           ))}

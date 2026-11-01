@@ -6,6 +6,7 @@ import {
 import {
   checkAllBookmarks,
   checkBookmark,
+  deleteBookmark,
   importBookmarks,
   listBookmarks,
 } from "../api/bookmark.api";
@@ -58,6 +59,17 @@ export function useCheckAllBookmarks() {
 
   return useMutation({
     mutationFn: checkAllBookmarks,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: bookmarkKeys.all }),
+  });
+}
+
+/** Permanently deletes a bookmark; the list refetches without it. */
+export function useDeleteBookmark() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteBookmark(id),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: bookmarkKeys.all }),
   });
