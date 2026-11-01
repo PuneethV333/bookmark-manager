@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -64,6 +65,15 @@ export class BookmarkController {
   @Get(':id/check')
   async checkOne(@Param('id') id: string, @CurrentUser() user: FirebaseUser) {
     return this.bookmarkService.checkOne(id, user.firebaseUid);
+  }
+
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Delete(':id')
+  async removeBookmark(
+    @Param('id') id: string,
+    @CurrentUser() user: FirebaseUser,
+  ) {
+    return this.bookmarkService.remove(id, user.firebaseUid);
   }
 
   @Throttle({ default: { limit: 60, ttl: 60_000 } })

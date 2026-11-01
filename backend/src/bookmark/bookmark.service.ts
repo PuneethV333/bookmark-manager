@@ -262,9 +262,10 @@ export class BookmarksService {
       result.number,
     );
 
-    const updated = await this.prisma.bookmark.update({
+    const { count } = await this.prisma.bookmark.updateMany({
       where: {
         id: bookmark.id,
+        firebaseUid,
       },
       data: {
         lastChapter: newLastChapter,
@@ -277,11 +278,19 @@ export class BookmarksService {
       },
     });
 
+    // The bookmark was deleted between the lookup and this write.
+    if (count === 0) {
+      throw new NotFoundException('Bookmark not found');
+    }
+
     return {
-      id: updated.id,
-      title: updated.title,
-      lastChapter: updated.lastChapter,
-      newChapterIsLocked: updated.newChapterIsLocked,
+      id: bookmark.id,
+      title: result.title?.trim() || bookmark.title,
+      lastChapter: newLastChapter,
+      newChapterIsLocked:
+        typeof result.isChapterLocked === 'boolean'
+          ? result.isChapterLocked
+          : bookmark.newChapterIsLocked,
       hasNewChapter,
       checked: true,
     };
@@ -350,10 +359,11 @@ export class BookmarksService {
           result.number,
         );
 
-        const updated = await dbLimit(() =>
-          this.prisma.bookmark.update({
+        await dbLimit(() =>
+          this.prisma.bookmark.updateMany({
             where: {
               id: bookmark.id,
+              firebaseUid,
             },
             data: {
               lastChapter: newLastChapter,
@@ -367,11 +377,16 @@ export class BookmarksService {
           }),
         );
 
+        // If the row was deleted mid-run the write is a no-op; still report the
+        // scrape so one deletion cannot fail the whole batch.
         return {
-          id: updated.id,
-          title: updated.title,
-          lastChapter: updated.lastChapter,
-          newChapterIsLocked: updated.newChapterIsLocked,
+          id: bookmark.id,
+          title: result.title?.trim() || bookmark.title,
+          lastChapter: newLastChapter,
+          newChapterIsLocked:
+            typeof result.isChapterLocked === 'boolean'
+              ? result.isChapterLocked
+              : bookmark.newChapterIsLocked,
           hasNewChapter,
           checked: true,
         };
@@ -393,6 +408,25 @@ export class BookmarksService {
           result.skippedReason === 'recently checked',
       ).length,
     };
+  }
+
+  /**
+   * Deletes one bookmark. deleteMany scopes the statement to the owner, so a
+   * row belonging to another user is indistinguishable from a missing one.
+   */
+  async remove(id: string, firebaseUid: string) {
+    const { count } = await this.prisma.bookmark.deleteMany({
+      where: {
+        id,
+        firebaseUid,
+      },
+    });
+
+    if (count === 0) {
+      throw new NotFoundException('Bookmark not found');
+    }
+
+    return { id, deleted: true };
   }
 
   async findAll(firebaseUid: string) {

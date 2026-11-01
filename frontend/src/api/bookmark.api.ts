@@ -32,3 +32,8 @@ export async function checkAllBookmarks(): Promise<BatchCheckResult> {
   const { data } = await api.get("/bookmark/check-all", { timeout: 120_000 });
   return batchCheckResultSchema.parse(data);
 }
+
+/** DELETE /bookmark/:id: permanently removes a bookmark. */
+export async function deleteBookmark(id: string): Promise<void> {
+  await api.delete(`/bookmark/${encodeURIComponent(id)}`);
+}
