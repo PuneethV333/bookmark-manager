@@ -26,4 +26,11 @@ export const SITE_MATCHERS: Record<
     );
     return match?.[1];
   },
+
+  'comix.to': (url) => {
+    const match = url.match(
+      /^https:\/\/(?:www\.)?comix\.to\/title\/([^/?#]+)/i,
+    );
+    return match?.[1];
+  },
 };
