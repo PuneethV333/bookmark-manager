@@ -55,6 +55,7 @@ const SITE_NAMES: Array<[match: string, label: string]> = [
   ["weeb", "WeebCentral"],
   ["temple", "TempleToons"],
   ["lust", "LustToon"],
+  ["comix", "Comix"],
 ];
 
 export function formatSite(site: string): string {

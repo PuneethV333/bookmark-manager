@@ -38,6 +38,14 @@ export const envSchema = z.object({
    * IP and header fingerprint.
    */
   TEMPLETOONS_COOKIE: z.string().optional(),
+
+  /**
+   * Optional Cloudflare clearance cookie for comix.to. The scraper tries a
+   * plain request first and only sends this when the site answers with a
+   * challenge. Expires quickly and is tied to the issuing browser's IP and
+   * header fingerprint.
+   */
+  COMIX_COOKIE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
