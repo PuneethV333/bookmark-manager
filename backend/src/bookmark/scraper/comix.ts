@@ -13,17 +13,22 @@ const BASE_URL = 'https://comix.to';
 const BROWSER_HEADERS = {
   accept:
     'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-  'accept-language': 'en-US,en;q=0.6',
+  'accept-language': 'en-US,en;q=0.7',
   'cache-control': 'max-age=0',
   'sec-ch-ua': '"Chromium";v="154", "Brave";v="154", "Not A(Brand";v="99"',
   'sec-ch-ua-arch': '"x86"',
   'sec-ch-ua-bitness': '"64"',
+  'sec-ch-ua-full-version-list':
+    '"Chromium";v="154.0.0.0", "Brave";v="154.0.0.0", "Not A(Brand";v="99.0.0.0"',
   'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-model': '""',
   'sec-ch-ua-platform': '"Linux"',
+  'sec-ch-ua-platform-version': '""',
   'sec-fetch-dest': 'document',
   'sec-fetch-mode': 'navigate',
   'sec-fetch-site': 'same-origin',
   'sec-fetch-user': '?1',
+  'sec-gpc': '1',
   'upgrade-insecure-requests': '1',
   'user-agent':
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36',
@@ -34,7 +39,7 @@ const BROWSER_HEADERS = {
 const CHALLENGE_TITLE =
   /just a moment|attention required|checking your browser|access denied/i;
 
-let challengeWarned = false;
+let failureLogged = false;
 
 /**
  * COMIX_COOKIE may hold either the bare cf_clearance value or a complete
@@ -47,13 +52,24 @@ function resolveCloudflareCookie(): string | undefined {
     return undefined;
   }
 
-  return raw.startsWith('cf_clearance=') ? raw : `cf_clearance=${raw}`;
+  const value = raw.startsWith('cf_clearance=')
+    ? raw.slice('cf_clearance='.length)
+    : raw;
+
+  // A real clearance value is long. Short values are placeholders such as the
+  // variable name copied from .env.example, which would only guarantee a 403.
+  if (value.length < 40) {
+    return undefined;
+  }
+
+  return `cf_clearance=${value}`;
 }
 
 interface ComixDetail {
   hid?: unknown;
   title?: unknown;
   latestChapter?: unknown;
+  latestChapterUrl?: unknown;
   hasChapters?: unknown;
   poster?: { medium?: unknown; large?: unknown } | null;
 }
@@ -80,6 +96,40 @@ function toAbsoluteUrl(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * `latestChapter` is normally a number. Fall back to a numeric string or the
+ * chapter number embedded in `latestChapterUrl` so a payload markup change
+ * does not discard an otherwise usable page.
+ */
+function parseLatestChapter(detail: ComixDetail): number | null {
+  if (
+    typeof detail.latestChapter === 'number' &&
+    Number.isFinite(detail.latestChapter)
+  ) {
+    return detail.latestChapter;
+  }
+
+  const fromString =
+    typeof detail.latestChapter === 'string'
+      ? Number(detail.latestChapter)
+      : Number.NaN;
+
+  if (Number.isFinite(fromString)) {
+    return fromString;
+  }
+
+  if (typeof detail.latestChapterUrl === 'string') {
+    const match = detail.latestChapterUrl.match(/chapter-(\d+(?:\.\d+)?)/i);
+    const fromUrl = match ? Number(match[1]) : Number.NaN;
+
+    if (Number.isFinite(fromUrl)) {
+      return fromUrl;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -130,9 +180,9 @@ export function parseComixHtml(
       return null;
     }
 
-    const number = Number(detail.latestChapter);
+    const number = parseLatestChapter(detail);
 
-    if (typeof detail.latestChapter !== 'number' || !Number.isFinite(number)) {
+    if (number === null) {
       return null;
     }
 
@@ -144,7 +194,9 @@ export function parseComixHtml(
     return {
       number,
       title,
-      image: toAbsoluteUrl(detail.poster?.large ?? detail.poster?.medium),
+      // The card-sized variant is what the site itself renders, and it is an
+      // order of magnitude smaller than `large`.
+      image: toAbsoluteUrl(detail.poster?.medium ?? detail.poster?.large),
       // The detail payload has no per-chapter lock flag, so lock status is
       // unknown rather than false.
     };
@@ -188,6 +240,23 @@ function looksLikeChallenge({ status, html }: PageResponse): boolean {
   return CHALLENGE_TITLE.test(title);
 }
 
+/** Logs the first failure per process; the library would otherwise repeat it. */
+function logFailure(response: PageResponse | null, reason: string): void {
+  if (failureLogged) {
+    return;
+  }
+
+  failureLogged = true;
+
+  const status = response ? `status ${response.status}` : 'no response';
+  const challenge =
+    response && looksLikeChallenge(response) ? ', Cloudflare challenge' : '';
+
+  console.warn(
+    `[Comix scraper] Could not read the series page (${status}${challenge}). ${reason}`,
+  );
+}
+
 export const scrapeComix: Scraper = async (
   url: string,
 ): Promise<ScrapedChapter | null> => {
@@ -221,7 +290,8 @@ export const scrapeComix: Scraper = async (
   const seriesUrl = `${BASE_URL}/title/${encodeURIComponent(slug)}`;
 
   try {
-    // Plain request first: the cookie is only used when it is needed.
+    // Plain request first: the cookie is only needed when Cloudflare
+    // challenges the request.
     const first = await fetchSeriesPage(seriesUrl);
 
     if (first.status < 400) {
@@ -234,25 +304,36 @@ export const scrapeComix: Scraper = async (
 
     const cookie = resolveCloudflareCookie();
 
-    if (!cookie || !looksLikeChallenge(first)) {
+    if (!cookie) {
+      logFailure(
+        first,
+        'no usable COMIX_COOKIE is configured; copy a fresh cf_clearance value from a browser that has passed the challenge.',
+      );
       return null;
     }
 
+    // Retry with the cookie even when the first response did not look like a
+    // challenge: a 200 page without initial-data is just as unusable.
     const second = await fetchSeriesPage(seriesUrl, cookie);
 
-    if (second.status >= 400 || looksLikeChallenge(second)) {
-      if (!challengeWarned) {
-        challengeWarned = true;
-        console.warn(
-          '[Comix scraper] Cloudflare challenge was not cleared; COMIX_COOKIE may be expired or tied to a different IP.',
-        );
-      }
+    if (second.status < 400) {
+      const parsed = parseComixHtml(second.html, hid);
 
-      return null;
+      if (parsed) {
+        return parsed;
+      }
     }
 
-    return parseComixHtml(second.html, hid);
-  } catch {
+    logFailure(
+      second,
+      'COMIX_COOKIE may be expired or bound to a different IP or User-Agent.',
+    );
+    return null;
+  } catch (error) {
+    logFailure(
+      null,
+      `request failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 };
