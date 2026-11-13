@@ -41,46 +41,19 @@ const BROWSER_HEADERS = {
 
 let failureLogged = false;
 
-/**
- * ASURA_COOKIE may hold either the bare cf_clearance value or a complete
- * `cf_clearance=...` cookie string.
- */
-function resolveCloudflareCookie(): string | undefined {
-  const raw = process.env.ASURA_COOKIE?.trim();
-
-  if (!raw) {
-    return undefined;
-  }
-
-  const value = raw.startsWith('cf_clearance=')
-    ? raw.slice('cf_clearance='.length)
-    : raw;
-
-  // Placeholders such as the variable name copied from .env.example would
-  // only guarantee a 403.
-  if (value.length < 40) {
-    return undefined;
-  }
-
-  return `cf_clearance=${value}`;
-}
-
 interface PageResponse {
   status: number;
   html: string;
   finalUrl: string;
 }
 
-async function fetchSeriesPage(
-  url: string,
-  cookie?: string,
-): Promise<PageResponse> {
+async function fetchSeriesPage(url: string): Promise<PageResponse> {
   const response = await axios.get<string>(url, {
     timeout: 10_000,
     maxRedirects: 5,
     maxContentLength: 5 * 1024 * 1024,
     responseType: 'text',
-    headers: cookie ? { ...BROWSER_HEADERS, cookie } : BROWSER_HEADERS,
+    headers: BROWSER_HEADERS,
     // Inspect the status ourselves: a challenge is a 403, not an error.
     validateStatus: () => true,
   });
@@ -130,6 +103,54 @@ interface EmbeddedChapter {
   publishedAt?: string;
 }
 
+function extractIslandProps(html: string): string | null {
+  const islandRegex =
+    /<astro-island\b(?=[^>]*component-url="[^"]*ChapterListReact)[^>]*\bprops="([^"]*)"[^>]*>/s;
+
+  const match = html.match(islandRegex);
+
+  return match?.[1] ? decodeHtmlEntities(match[1]) : null;
+}
+
+function toCardCover(url: string): string {
+  if (/-400\.[a-z0-9]+$/i.test(url)) {
+    return url;
+  }
+
+  return url.replace(/\.(webp|jpe?g|png)$/i, '-400.$1');
+}
+
+/**
+ * The og:image on these pages points at /og/comics/<slug>.jpg, which
+ * Cloudflare blocks with a 403 even in a browser. The CDN cover loads fine
+ * without a cookie, so prefer the island's coverUrl and fall back to a CDN
+ * file named after the series slug.
+ */
+function extractCoverUrl(html: string, slug: string): string | undefined {
+  const props = extractIslandProps(html);
+  const fromProps = props?.match(/"coverUrl"\s*:\s*\[0,\s*"([^"]+)"/)?.[1];
+
+  if (fromProps) {
+    return toCardCover(fromProps);
+  }
+
+  const base = slug.replace(/-[0-9a-f]{8}$/i, '');
+  const marker = `cdn.asurascans.com/asura-images/covers/${base}.`;
+  const start = html.indexOf(marker);
+
+  if (start === -1) {
+    return undefined;
+  }
+
+  const end = html.slice(start).search(/["'\\\s&]/);
+
+  if (end === -1) {
+    return undefined;
+  }
+
+  return toCardCover(`https://${html.slice(start, start + end)}`);
+}
+
 /**
  * Extract chapters from the serialized ChapterListReact Astro island.
  *
@@ -137,16 +158,11 @@ interface EmbeddedChapter {
  * e.g. "number":[0,99] and "is_premium":[0,true].
  */
 function extractLatestChapterFromIsland(html: string): EmbeddedChapter | null {
-  const islandRegex =
-    /<astro-island\b(?=[^>]*component-url="[^"]*ChapterListReact)[^>]*\bprops="([^"]*)"[^>]*>/s;
+  const props = extractIslandProps(html);
 
-  const match = html.match(islandRegex);
-
-  if (!match?.[1]) {
+  if (!props) {
     return null;
   }
-
-  const props = decodeHtmlEntities(match[1]);
 
   // Match complete serialized chapter objects, rather than matching
   // number and is_premium independently across different chapters.
@@ -281,25 +297,13 @@ export const scrapeAsuraScans = async (
   }
 
   if (looksLikeChallenge(page) || page.status >= 400) {
-    const cookie = resolveCloudflareCookie();
-
-    if (cookie) {
-      try {
-        page = await fetchSeriesPage(parsedUrl.href, cookie);
-      } catch {
-        // Keep the first response for the failure log below.
-      }
-    }
-
-    if (looksLikeChallenge(page) || page.status >= 400) {
-      logFailure(
-        page,
-        cookie
-          ? 'ASURA_COOKIE may be expired or bound to a different IP or User-Agent.'
-          : 'no usable ASURA_COOKIE is configured.',
-      );
-      return null;
-    }
+    logFailure(
+      page,
+      looksLikeChallenge(page)
+        ? 'Cloudflare challenge; the scraper uses browser headers only and does not send cookies.'
+        : 'Unexpected response status.',
+    );
+    return null;
   }
 
   const html = page.html;
@@ -330,7 +334,10 @@ export const scrapeAsuraScans = async (
 
   const title = $('h1').first().text().trim() || undefined;
 
-  const image = $('meta[property="og:image"]').attr('content') || undefined;
+  const image =
+    extractCoverUrl(html, slug) ||
+    $('meta[property="og:image"]').attr('content') ||
+    undefined;
 
   // Prefer embedded data because it contains is_premium.
   const embeddedChapter = extractLatestChapterFromIsland(html);
