@@ -41,30 +41,6 @@ const CHALLENGE_TITLE =
 
 let failureLogged = false;
 
-/**
- * COMIX_COOKIE may hold either the bare cf_clearance value or a complete
- * `cf_clearance=...` cookie string.
- */
-function resolveCloudflareCookie(): string | undefined {
-  const raw = process.env.COMIX_COOKIE?.trim();
-
-  if (!raw) {
-    return undefined;
-  }
-
-  const value = raw.startsWith('cf_clearance=')
-    ? raw.slice('cf_clearance='.length)
-    : raw;
-
-  // A real clearance value is long. Short values are placeholders such as the
-  // variable name copied from .env.example, which would only guarantee a 403.
-  if (value.length < 40) {
-    return undefined;
-  }
-
-  return `cf_clearance=${value}`;
-}
-
 interface ComixDetail {
   hid?: unknown;
   title?: unknown;
@@ -210,16 +186,13 @@ interface PageResponse {
   html: string;
 }
 
-async function fetchSeriesPage(
-  url: string,
-  cookie?: string,
-): Promise<PageResponse> {
+async function fetchSeriesPage(url: string): Promise<PageResponse> {
   const response = await axios.get<string>(url, {
     timeout: 12_000,
     maxRedirects: 3,
     maxContentLength: 5 * 1024 * 1024,
     responseType: 'text',
-    headers: cookie ? { ...BROWSER_HEADERS, cookie } : BROWSER_HEADERS,
+    headers: BROWSER_HEADERS,
     // Inspect the status ourselves: a challenge is a 403/503, not an error.
     validateStatus: () => true,
   });
@@ -290,34 +263,10 @@ export const scrapeComix: Scraper = async (
   const seriesUrl = `${BASE_URL}/title/${encodeURIComponent(slug)}`;
 
   try {
-    // Plain request first: the cookie is only needed when Cloudflare
-    // challenges the request.
-    const first = await fetchSeriesPage(seriesUrl);
+    const page = await fetchSeriesPage(seriesUrl);
 
-    if (first.status < 400) {
-      const parsed = parseComixHtml(first.html, hid);
-
-      if (parsed) {
-        return parsed;
-      }
-    }
-
-    const cookie = resolveCloudflareCookie();
-
-    if (!cookie) {
-      logFailure(
-        first,
-        'no usable COMIX_COOKIE is configured; copy a fresh cf_clearance value from a browser that has passed the challenge.',
-      );
-      return null;
-    }
-
-    // Retry with the cookie even when the first response did not look like a
-    // challenge: a 200 page without initial-data is just as unusable.
-    const second = await fetchSeriesPage(seriesUrl, cookie);
-
-    if (second.status < 400) {
-      const parsed = parseComixHtml(second.html, hid);
+    if (page.status < 400) {
+      const parsed = parseComixHtml(page.html, hid);
 
       if (parsed) {
         return parsed;
@@ -325,8 +274,10 @@ export const scrapeComix: Scraper = async (
     }
 
     logFailure(
-      second,
-      'COMIX_COOKIE may be expired or bound to a different IP or User-Agent.',
+      page,
+      looksLikeChallenge(page)
+        ? 'Cloudflare challenge; the scraper uses browser headers only and does not send cookies.'
+        : 'The page did not contain the expected initial-data payload.',
     );
     return null;
   } catch (error) {
