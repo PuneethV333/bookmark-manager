@@ -30,30 +30,6 @@ export const envSchema = z.object({
     .string()
     .min(1, 'FIREBASE_PRIVATE_KEY is required')
     .transform((value) => value.replace(/\\n/g, '\n')),
-
-  /**
-   * Cloudflare clearance cookie for templetoons.com. The site sits behind a
-   * bot challenge, so requests without it get the challenge page instead of
-   * any chapter data. Expires quickly and is tied to the issuing browser's
-   * IP and header fingerprint.
-   */
-  TEMPLETOONS_COOKIE: z.string().optional(),
-
-  /**
-   * Optional Cloudflare clearance cookie for comix.to. The scraper tries a
-   * plain request first and only sends this when the site answers with a
-   * challenge. Expires quickly and is tied to the issuing browser's IP and
-   * header fingerprint.
-   */
-  COMIX_COOKIE: z.string().optional(),
-
-  /**
-   * Optional Cloudflare clearance cookie for asurascans.com. The site now
-   * rejects requests that lack browser client hints; this is a fallback for
-   * the cases where a challenge still appears. Expires quickly and is tied to
-   * the issuing browser's IP and User-Agent.
-   */
-  ASURA_COOKIE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
