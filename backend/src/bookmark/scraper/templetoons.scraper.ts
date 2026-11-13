@@ -5,9 +5,8 @@ import type { ScrapedChapter, Scraper } from '../type/main.type';
 const BASE_URL = 'https://templetoons.com';
 
 /**
- * Headers taken from a request that clears the site's Cloudflare challenge.
- * The clearance cookie alone is not enough; Cloudflare also expects these
- * client hints to agree with each other.
+ * Browser-consistent headers. The site is behind Cloudflare, which expects the
+ * client hints to agree; no clearance cookie is sent.
  */
 const BROWSER_HEADERS = {
   accept:
@@ -29,20 +28,6 @@ const BROWSER_HEADERS = {
   priority: 'u=0, i',
 };
 
-/**
- * TEMPLETOONS_COOKIE may hold either the bare cf_clearance value or a
- * complete `cf_clearance=...` cookie string.
- */
-function resolveCloudflareCookie(): string | undefined {
-  const raw = process.env.TEMPLETOONS_COOKIE?.trim();
-
-  if (!raw) {
-    return undefined;
-  }
-
-  return raw.startsWith('cf_clearance=') ? raw : `cf_clearance=${raw}`;
-}
-
 interface ChapterCandidate {
   number: number;
   url: string;
@@ -50,6 +35,8 @@ interface ChapterCandidate {
   image?: string;
   isChapterLocked?: boolean;
   date?: string;
+  /** The row's `chapter-link-chapter-N` id; header CTAs do not have one. */
+  elementId?: string;
 }
 
 function normalizeText(value: string): string {
@@ -197,6 +184,11 @@ function parseChapterCandidates(
     }
 
     const imageElement = anchor.find('img').first();
+    const timeElement = anchor.find('time').first();
+    const date =
+      timeElement.attr('datetime') ||
+      normalizeText(timeElement.text()) ||
+      undefined;
 
     const candidate: ChapterCandidate = {
       number,
@@ -208,6 +200,8 @@ function parseChapterCandidates(
         imageElement.attr('src') ??
         undefined,
       isChapterLocked: detectChapterLock($, anchor),
+      elementId: anchor.attr('id'),
+      date,
     };
 
     const existing = byUrl.get(chapterUrl.href);
@@ -225,6 +219,8 @@ function parseChapterCandidates(
       url: existing.url,
       title: existing.title ?? candidate.title,
       image: existing.image ?? candidate.image,
+      elementId: existing.elementId ?? candidate.elementId,
+      date: existing.date ?? candidate.date,
       isChapterLocked:
         existing.isChapterLocked === true || candidate.isChapterLocked === true
           ? true
@@ -255,14 +251,22 @@ export const scrapeTempleToons: Scraper = async (
   }
 
   try {
-    const cookie = resolveCloudflareCookie();
+    // Always read the series page, even when a chapter URL was bookmarked, so
+    // the result is the series' newest chapter.
+    const seriesSlug = parsedUrl.pathname.match(/^\/comic\/([^/]+)/)?.[1];
 
-    const response = await axios.get<string>(parsedUrl.href, {
+    if (!seriesSlug) {
+      return null;
+    }
+
+    const seriesUrl = `${BASE_URL}/comic/${encodeURIComponent(seriesSlug)}`;
+
+    const response = await axios.get<string>(seriesUrl, {
       timeout: 12_000,
       maxRedirects: 3,
       maxContentLength: 5 * 1024 * 1024,
       responseType: 'text',
-      headers: cookie ? { ...BROWSER_HEADERS, cookie } : BROWSER_HEADERS,
+      headers: BROWSER_HEADERS,
       validateStatus: (status) => status >= 200 && status < 300,
     });
 
@@ -293,16 +297,24 @@ export const scrapeTempleToons: Scraper = async (
     const image =
       $('meta[property="og:image"]').attr('content')?.trim() || undefined;
 
-    const chapters = parseChapterCandidates(html, parsedUrl.href);
+    const chapters = parseChapterCandidates(html, seriesUrl);
 
     if (chapters.length === 0) {
       return null;
     }
 
-    // Choose the highest chapter number, not the first matching link.
-    const latest = chapters.reduce((current, candidate) =>
-      candidate.number > current.number ? candidate : current,
-    );
+    // The page lists chapters newest-first. Do not take the highest number:
+    // some series carry old uploads with non-monotonic numbers (for example
+    // 1115 alongside 126), and those must not become the "latest" chapter.
+    // The header has a "Latest: Ch. N" CTA, then the newest chapter row, then
+    // older rows; "Start reading" points at chapter 1 and comes first.
+    const latest =
+      chapters.find((chapter) => /\blatest\b/i.test(chapter.title ?? '')) ??
+      chapters.find((chapter) => chapter.date) ??
+      chapters.find((chapter) =>
+        chapter.elementId?.startsWith('chapter-link-'),
+      ) ??
+      chapters[0];
 
     return {
       number: latest.number,
